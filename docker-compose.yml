@@ -1,0 +1,69 @@
+services:
+  pihole:
+    image: pihole/pihole:latest
+    platform: linux/arm64
+    container_name: pihole
+    hostname: pihole
+    restart: unless-stopped
+
+    networks:
+      dns:
+        ipv4_address: 10.20.30.2
+
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "80:80/tcp"
+
+    environment:
+      # put your own timezone here
+      TZ: Europe/Berlin
+      # change the password for the pihole web interface
+      FTLCONF_webserver_api_password: "CHANGE_ME_PLEASE"
+      FTLCONF_dns_upstreams: "10.20.30.3#5335"
+      FTLCONF_dns_listeningMode: "all"
+
+    volumes:
+      - ./pihole/pihole:/etc/pihole
+      - ./pihole/dnsmasq.d:/etc/dnsmasq.d
+
+    depends_on:
+      - unbound
+
+  unbound:
+    # using a fork of unbound which runs on arm64
+    image: shaanmajid/unbound:latest
+    container_name: unbound
+    restart: unless-stopped
+
+    healthcheck:
+      # adjusted health check, otherwise the container would try port 53 
+      # and the request would fail, this causes the container to be unhealthy 
+      test: ["CMD-SHELL", "drill @127.0.0.1 -p 5335 cloudflare.com || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    networks:
+      dns:
+        ipv4_address: 10.20.30.3
+
+    expose:
+      - "5335/tcp"
+      - "5335/udp"
+
+    volumes:
+      # unbound root.hints and unbound.conf need to be added by hand
+      - ./pihole/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+      - ./pihole/unbound/root.hints:/opt/unbound/etc/unbound/root.hints:ro
+
+# setup a small internal network for the pihole and unbound
+networks:
+  dns:
+    name: pihole_dns
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.20.30.0/29
+          gateway: 10.20.30.1
